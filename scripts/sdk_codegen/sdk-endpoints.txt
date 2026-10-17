@@ -69,6 +69,10 @@ POST /api/v1/audio/speech
 POST /api/v1/audio/transcriptions
 
 [excluded]
+# The RFC 7523 token exchange the Anthropic SDKs and Claude Code already speak
+# when ANTHROPIC_BASE_URL points at Otari. A client that wants workload identity
+# uses that implementation; an Otari SDK wrapper would be a second one.
+POST /api/v1/oauth/token                            # protocol endpoint, spoken by the Anthropic SDKs
 GET /api/v1/models/{model_id}                       # redundant, list_models covers discovery
 # Caller-orchestrated MCP is public, but no SDK shell wraps it yet. Typed
 # mcp.list_tools and mcp.execute methods are the next step for the SDKs, and
@@ -185,6 +189,9 @@ PATCH /api/v1/keys/{key_id}/end-users               # not yet wrapped
 GET /api/v1/keys/{key_id}/end-users/{external_id}   # not yet wrapped
 PUT /api/v1/keys/{key_id}/end-users/{external_id}   # not yet wrapped
 PATCH /api/v1/keys/{key_id}/end-users/{external_id} # not yet wrapped
+POST /api/v1/keys/{key_id}/federation-rules         # not yet wrapped
+GET /api/v1/keys/{key_id}/federation-rules          # not yet wrapped
+DELETE /api/v1/keys/{key_id}/federation-rules/{rule_id}  # not yet wrapped
 # A service key managing its own end users, authenticated with that key
 GET /api/v1/end-users                               # not yet wrapped
 PUT /api/v1/end-users                               # not yet wrapped

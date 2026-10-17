@@ -1990,6 +1990,56 @@ export interface paths {
         patch: operations["keys-update_end_user"];
         trace?: never;
     };
+    "/api/v1/keys/{key_id}/federation-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Federation Rules
+         * @description List the identities that may authenticate as this key, oldest first.
+         */
+        get: operations["keys-list_federation_rules"];
+        put?: never;
+        /**
+         * Create Federation Rule
+         * @description Let an OpenID Connect identity token authenticate as this key, in place of its secret.
+         *
+         *     The issuer must be one of the deployment's ``federation_issuers``, else 400. A token authenticates when it is
+         *     signed by that issuer, its ``aud`` contains ``audience``, and it carries the rule's ``subject`` and verified
+         *     ``email``, whichever the rule sets. A rule naming the identity of an existing rule answers 409: the same issuer,
+         *     audience, subject and email on this key, or on another key the same issuer and audience with a subject or email
+         *     in common and no contradicting value.
+         */
+        post: operations["keys-create_federation_rule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/keys/{key_id}/federation-rules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Federation Rule
+         * @description Remove a federation rule. Tokens it matched stop authenticating with the next request.
+         */
+        delete: operations["keys-delete_federation_rule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/keys/{key_id}/rotate": {
         parameters: {
             query?: never;
@@ -2264,6 +2314,33 @@ export interface paths {
          *     - API key without user field: Use the shared "default" user
          */
         post: operations["moderations-create_moderation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/oauth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange Token
+         * @description Exchange an identity token for an access token (the RFC 7523 ``jwt-bearer`` grant).
+         *
+         *     The identity token must verify against an issuer on ``federation_issuers`` and match the federation rule
+         *     ``federation_rule_id`` names. ``organization_id``, ``workspace_id`` and ``service_account_id``, where set, must
+         *     be the UUIDs of the rule's key's organization and workspace and the key's id. The access token authenticates as
+         *     that key until ``expires_in`` runs out, the rule is deleted or the key stops passing its checks.
+         *
+         *     Every refusal of the identity token answers 401 ``invalid_grant`` with the same description.
+         */
+        post: operations["oauth-exchange_token"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10159,6 +10236,127 @@ export interface components {
              */
             selector: string;
         };
+        /**
+         * FederationRuleCreate
+         * @description An OpenID Connect identity that may authenticate as the key, in place of its secret.
+         *
+         *     A token matches when it is signed by ``issuer``, names ``audience`` among its audiences, and carries each of
+         *     ``subject`` and ``email`` that the rule sets; an email matches only when the token marks it verified. At least
+         *     one of the two is required.
+         * @example {
+         *       "audience": "https://otari.example.com",
+         *       "email": "hackbot-api@my-project.iam.gserviceaccount.com",
+         *       "issuer": "https://accounts.google.com"
+         *     }
+         */
+        FederationRuleCreate: {
+            /**
+             * Audience
+             * @description A value the token's 'aud' must contain.
+             */
+            audience: string;
+            /**
+             * Email
+             * @description The token's verified 'email', when the rule names one. Compared without regard to case.
+             */
+            email?: string | null;
+            /**
+             * Issuer
+             * @description The token's 'iss', one of the deployment's federation_issuers.
+             */
+            issuer: string;
+            /**
+             * Subject
+             * @description The token's 'sub', when the rule names one.
+             */
+            subject?: string | null;
+        };
+        /**
+         * FederationRulePublic
+         * @description A federation rule of an API key.
+         */
+        FederationRulePublic: {
+            /** Api Key Id */
+            api_key_id: string;
+            /** Audience */
+            audience: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Email */
+            email: string | null;
+            /** Id */
+            id: string;
+            /** Issuer */
+            issuer: string;
+            /** Subject */
+            subject: string | null;
+        };
+        /**
+         * FederationTokenRequest
+         * @description An RFC 7523 ``jwt-bearer`` token request, as the Anthropic SDKs and Claude Code send it.
+         *
+         *     Every field is optional here so that a missing one is answered in the RFC 6749 error shape rather than as a
+         *     validation error. Fields the request does not use are ignored.
+         * @example {
+         *       "assertion": "<identity token>",
+         *       "federation_rule_id": "7d0c7a52-9a2e-4b55-8f3a-2f1f6c0d2a11",
+         *       "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+         *       "organization_id": "5b3f8e0e-1c2d-4e7f-9a8b-0c1d2e3f4a5b"
+         *     }
+         */
+        FederationTokenRequest: {
+            /**
+             * Assertion
+             * @description The identity token.
+             */
+            assertion?: string | null;
+            /**
+             * Federation Rule Id
+             * @description The id of the federation rule the identity token must match.
+             */
+            federation_rule_id?: string | null;
+            /**
+             * Grant Type
+             * @description urn:ietf:params:oauth:grant-type:jwt-bearer
+             */
+            grant_type?: string | null;
+            /**
+             * Organization Id
+             * @description When set, the UUID of the organization of the rule's key.
+             */
+            organization_id?: string | null;
+            /**
+             * Service Account Id
+             * @description When set, the id of the rule's key.
+             */
+            service_account_id?: string | null;
+            /**
+             * Workspace Id
+             * @description When set, the UUID of the rule's key's workspace.
+             */
+            workspace_id?: string | null;
+        };
+        /**
+         * FederationTokenResponse
+         * @description An access token, as RFC 6749 section 5.1 shapes it. Present it as a bearer token in place of the key.
+         */
+        FederationTokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /**
+             * Expires In
+             * @description Seconds until the access token expires.
+             */
+            expires_in: number;
+            /**
+             * Token Type
+             * @default Bearer
+             */
+            token_type: string;
+        };
         /** GateResultResponse */
         GateResultResponse: {
             /** Detail */
@@ -11791,6 +11989,19 @@ export interface components {
              * @default false
              */
             terms_accepted: boolean;
+        };
+        /**
+         * OAuthErrorResponse
+         * @description A refused token request, as RFC 6749 section 5.2 shapes it.
+         */
+        OAuthErrorResponse: {
+            /**
+             * Error
+             * @description invalid_request, unsupported_grant_type, invalid_grant or temporarily_unavailable
+             */
+            error: string;
+            /** Error Description */
+            error_description: string;
         };
         /**
          * OAuthSessionResponse
@@ -20917,6 +21128,102 @@ export interface operations {
             };
         };
     };
+    "keys-list_federation_rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederationRulePublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "keys-create_federation_rule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FederationRuleCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederationRulePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "keys-delete_federation_rule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "keys-rotate_key": {
         parameters: {
             query?: never;
@@ -21409,6 +21716,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "oauth-exchange_token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FederationTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederationTokenResponse"];
+                };
+            };
+            /** @description invalid_request or unsupported_grant_type */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthErrorResponse"];
+                };
+            };
+            /** @description invalid_grant */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description temporarily_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthErrorResponse"];
                 };
             };
         };

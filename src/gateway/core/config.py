@@ -1898,7 +1898,7 @@ class GatewayConfig(
             raise ValueError(msg) from exc
 
     def validate_declared_access(self) -> None:
-        """Refuse ``budgets`` and ``api_keys`` declarations on a hybrid gateway.
+        """Refuse declared access a hybrid gateway cannot hold, and federation without ``OTARI_SECRET_KEY``.
 
         A hybrid gateway holds no budgets or keys of its own, so it refuses both
         rather than ignoring them, the way it refuses ``rate_limits``.
@@ -1907,6 +1907,19 @@ class GatewayConfig(
             msg = (
                 "budgets and api_keys are declared in config, but a hybrid gateway holds neither; "
                 "declare them on the control plane instead"
+            )
+            raise ValueError(msg)
+        if self.is_hybrid_mode and self.federation_issuers:
+            msg = (
+                "federation_issuers is set, but a hybrid gateway verifies no API keys of its own; "
+                "workload identity needs standalone or hosted mode"
+            )
+            raise ValueError(msg)
+        if self.federation_issuers and not (otari_env("SECRET_KEY") or "").replace(",", " ").strip():
+            msg = (
+                "federation_issuers is set, but OTARI_SECRET_KEY is not; it signs the access tokens "
+                "POST /api/v1/oauth/token issues. Set OTARI_SECRET_KEY (generate one with "
+                "`otari gen-secret-key`) or clear federation_issuers"
             )
             raise ValueError(msg)
 

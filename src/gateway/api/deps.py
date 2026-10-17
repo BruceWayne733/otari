@@ -1,4 +1,5 @@
 import secrets
+import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
@@ -37,7 +38,7 @@ from gateway.ports.provider_file_port import ProviderFilePort
 from gateway.ports.rate_limit_store_port import RateLimitStorePort
 from gateway.ports.telemetry_storage_port import TelemetryStoragePort
 from gateway.ports.web_search_policy_port import WebSearchPolicyPort
-from gateway.repositories.api_keys import ApiKeyRepository
+from gateway.repositories.api_keys import ApiKeyRepositories, ApiKeyRepository, FederationRuleRepository
 from gateway.repositories.budgets import BudgetRepositories
 from gateway.repositories.files import FileRepositories
 from gateway.repositories.identity import IdentityRepositories
@@ -68,7 +69,18 @@ from gateway.repositories.tools import (
 from gateway.repositories.traces import TracesRepositories
 from gateway.repositories.usage_and_telemetry import UsageLogRepository
 from gateway.repositories.users_repository import get_active_user
-from gateway.services.api_keys import ApiKeyService
+from gateway.services.api_keys import (
+    ApiKeyService,
+    FederatedTokenVerifier,
+    FederationRefusedError,
+    FederationTokenExchange,
+    FederationUnavailableError,
+    is_access_token,
+    key_refusal,
+    match_federation_rules,
+    read_access_token,
+    unverified_issuer,
+)
 from gateway.services.budgets import BudgetMembershipListener, BudgetService
 from gateway.services.code_execution import SandboxContainerRegistry
 from gateway.services.dashboard_session_service import SESSION_COOKIE_NAME, resolve_dashboard_session
@@ -95,6 +107,7 @@ from gateway.services.providers import (
 )
 from gateway.services.rate_limits import RateLimitService
 from gateway.services.routing import RoutingService, clear_router_backend_cache
+from gateway.services.secret_box import configured_secret_keys
 from gateway.services.tenancy import (
     DomainAutoJoinListener,
     InvitationClaimSettings,
@@ -307,22 +320,18 @@ async def _verify_and_update_api_key(db: AsyncSession, token: str, key_format: A
             detail="Invalid API key",
         )
 
-    if not api_key.is_active:
-        record_auth_failure("inactive_key")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key is inactive",
-        )
+    return await _admit_api_key(api_key)
 
-    expires_at = _as_utc(api_key.expires_at)
-    if expires_at is not None and expires_at < datetime.now(UTC):
-        record_auth_failure("expired_key")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key has expired",
-        )
 
+async def _admit_api_key(api_key: APIKey) -> APIKey:
+    """The checks a key passes once found, shared so a secret, an identity token and an access token admit alike."""
     now = datetime.now(UTC)
+    refusal = key_refusal(api_key, now)
+    if refusal is not None:
+        reason, detail = refusal
+        record_auth_failure(reason)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+
     last_used_at = _as_utc(api_key.last_used_at)
     should_update_last_used = (
         last_used_at is None or (now - last_used_at).total_seconds() >= _LAST_USED_UPDATE_INTERVAL_SECONDS
@@ -332,6 +341,108 @@ async def _verify_and_update_api_key(db: AsyncSession, token: str, key_format: A
         await _bump_last_used_at(api_key.id, now)
 
     return api_key
+
+
+def _federated_token_verifier(request: Request, config: GatewayConfig) -> FederatedTokenVerifier:
+    """The app's token verifier for the configured issuers, built on first use and when they change.
+
+    Kept on the app rather than per request, because it caches each issuer's signing keys.
+    """
+    verifier: FederatedTokenVerifier | None = getattr(request.app.state, "federated_token_verifier", None)
+    if (
+        verifier is None
+        or verifier.issuers != tuple(config.federation_issuers)
+        or verifier.allow_private_hosts != config.federation_allow_private_hosts
+    ):
+        verifier = FederatedTokenVerifier(
+            config.federation_issuers, allow_private_hosts=config.federation_allow_private_hosts
+        )
+        request.app.state.federated_token_verifier = verifier
+    return verifier
+
+
+async def _verify_federated_token(request: Request, db: AsyncSession, token: str, config: GatewayConfig) -> APIKey:
+    """Authenticate an identity token as the key whose federation rule it matches.
+
+    Every refusal answers the same 401 as an unknown key, so a caller cannot
+    tell which check failed; the metric records which one did. Once a rule
+    matches, the key is admitted exactly as when its secret is presented.
+    """
+    try:
+        identity = await _federated_token_verifier(request, config).verify(token)
+        match = match_federation_rules(
+            await FederationRuleRepository(db).candidates(identity.issuer, identity.audiences), identity
+        )
+        api_key = await ApiKeyRepository(db).get(match.api_key_id)
+    except FederationUnavailableError as exc:
+        record_auth_failure("federation_unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication temporarily unavailable, please retry",
+        ) from exc
+    except FederationRefusedError as exc:
+        record_auth_failure(exc.reason)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key") from exc
+    except DATABASE_ERRORS as exc:
+        record_auth_failure("db_error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication temporarily unavailable, please retry",
+        ) from exc
+    # Internal keys hold a stored credential and are never anyone's to present; a rule on one is refused too.
+    if api_key is None or api_key.internal_secret is not None:
+        record_auth_failure("federation_no_rule")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    logger.debug(
+        "Federated token from %s matched rule(s) %s of API key %s",
+        identity.issuer,
+        ",".join(match.rule_ids),
+        api_key.id,
+    )
+    return await _admit_api_key(api_key)
+
+
+async def _verify_access_token(db: AsyncSession, token: str, config: GatewayConfig) -> APIKey:
+    """Authenticate an access token from ``POST /oauth/token`` as the key of the rule it names.
+
+    The rule and the key are reloaded on every request, so deleting the rule, deactivating the key or dropping the
+    rule's issuer from ``federation_issuers`` ends the token at once. Refusals answer the same 401 as an unknown key.
+    """
+    try:
+        claims = read_access_token(token, configured_secret_keys(), now=time.time())
+        rule = await FederationRuleRepository(db).get(claims.rule_id)
+        if rule is None or rule.api_key_id != claims.api_key_id:
+            raise FederationRefusedError("federation_rule_gone")
+        if all(entry.issuer != rule.issuer for entry in config.federation_issuers):
+            raise FederationRefusedError("federation_unknown_issuer")
+        api_key = await ApiKeyRepository(db).get(claims.api_key_id)
+    except FederationRefusedError as exc:
+        record_auth_failure(exc.reason)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key") from exc
+    except DATABASE_ERRORS as exc:
+        record_auth_failure("db_error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication temporarily unavailable, please retry",
+        ) from exc
+    if api_key is None or api_key.internal_secret is not None:
+        record_auth_failure("federation_rule_gone")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    return await _admit_api_key(api_key)
+
+
+async def _verify_credential(request: Request, db: AsyncSession, token: str, config: GatewayConfig) -> APIKey:
+    """Verify a presented credential as an API key.
+
+    With federation on, the prefix of an access token or the shape of a JWT routes it before anything is parsed:
+    an access token, then a raw identity token. Everything else is a key secret.
+    """
+    if config.federation_issuers:
+        if is_access_token(token):
+            return await _verify_access_token(db, token, config)
+        if unverified_issuer(token) is not None:
+            return await _verify_federated_token(request, db, token, config)
+    return await _verify_and_update_api_key(db, token, _api_key_format(request, db))
 
 
 async def _bump_last_used_at(api_key_id: str, now: datetime) -> None:
@@ -501,9 +612,10 @@ async def verify_api_key(
 ) -> APIKey:
     """Verify API key from the credential headers.
 
-    ``config`` is not consulted, but stays in the signature: like its sibling
-    ``verify_api_key_or_master_key``, this is called directly (not only via
-    ``Depends``) by downstream deployments, so the three-argument shape is API.
+    ``config`` says whether an identity token may stand in for a key's secret
+    (``federation_issuers``). Like its sibling ``verify_api_key_or_master_key``,
+    this is called directly (not only via ``Depends``) by downstream
+    deployments, so the three-argument shape is API.
 
     Args:
         request: FastAPI request object
@@ -518,7 +630,7 @@ async def verify_api_key(
 
     """
     token = extract_credential_token(request)
-    return await _verify_and_update_api_key(db, token, _api_key_format(request, db))
+    return await _verify_credential(request, db, token, config)
 
 
 async def verify_service_key(api_key: Annotated[APIKey, Depends(verify_api_key)]) -> APIKey:
@@ -676,7 +788,7 @@ async def verify_api_key_or_master_key(
     if await is_valid_master_key(token, config, db):
         return None, True
 
-    api_key = await _verify_and_update_api_key(db, token, _api_key_format(request, db))
+    api_key = await _verify_credential(request, db, token, config)
     return api_key, False
 
 
@@ -1376,6 +1488,46 @@ def get_invitation_mail_limit(
 InvitationMailLimitDep = Annotated[InvitationMailLimit, Depends(get_invitation_mail_limit)]
 
 
+def get_api_key_service(uow: Annotated[UnitOfWork, Depends(get_unit_of_work)]) -> ApiKeyService:
+    """Build the request's API key service on the request's Unit of Work."""
+    return ApiKeyService(uow, ApiKeyRepositories.on(uow))
+
+
+ApiKeyServiceDep = Annotated[ApiKeyService, Depends(get_api_key_service)]
+
+
+def build_federation_token_exchange(
+    uow: UnitOfWork, config: GatewayConfig, verifier: FederatedTokenVerifier
+) -> FederationTokenExchange:
+    """Build the token exchange on a Unit of Work; the key's organization is read through the same one."""
+    workspaces = WorkspaceRepository(uow)
+
+    async def organization_of_workspace(workspace_id: uuid.UUID) -> uuid.UUID | None:
+        workspace = await workspaces.get(workspace_id)
+        return None if workspace is None else workspace.organization_id
+
+    return FederationTokenExchange(
+        uow,
+        ApiKeyRepositories.on(uow),
+        verifier=verifier,
+        organization_of_workspace=organization_of_workspace,
+        ttl_seconds=config.federation_access_token_ttl_sec,
+        secrets=configured_secret_keys(),
+    )
+
+
+def get_federation_token_exchange(
+    request: Request,
+    uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
+    config: Annotated[GatewayConfig, Depends(get_config)],
+) -> FederationTokenExchange:
+    """The request's token exchange."""
+    return build_federation_token_exchange(uow, config, _federated_token_verifier(request, config))
+
+
+FederationTokenExchangeDep = Annotated[FederationTokenExchange, Depends(get_federation_token_exchange)]
+
+
 def get_budget_service(
     uow: Annotated[UnitOfWork, Depends(get_unit_of_work)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -1386,7 +1538,7 @@ def get_budget_service(
         uow,
         BudgetRepositories.on(uow),
         organizations,
-        ApiKeyService(ApiKeyRepository(uow)),
+        get_api_key_service(uow),
         WorkspaceAccess(db, organizations),
     )
 
