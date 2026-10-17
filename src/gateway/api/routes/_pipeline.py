@@ -78,6 +78,7 @@ from gateway.api.deps import (
     get_budget_service,
     verify_api_key_or_master_key,
 )
+from gateway.api.routes._attempt_metrics import record_abandoned_attempt
 from gateway.api.routes._attempts import (
     AdmitAttempt,
     CandidateCannotServe,
@@ -102,13 +103,10 @@ from gateway.api.routes._platform import (
     _STREAM_FIRST_CHUNK_TIMEOUT_MS_TOOL_LOOP_KEY,
     ResolvedAttempt,
     ResolvedRoute,
-    SettledCost,
     _classify_upstream_error,
     _report_platform_usage,
     _resolve_platform_credentials,
     get_shared_rejection,
-    is_provider_credential_rejection,
-    record_abandoned_attempt,
     run_platform_attempts,
     with_attempt_id,
 )
@@ -214,6 +212,7 @@ from gateway.rate_limit import (
     admit_rate_limit_rules,
     check_rate_limit,
 )
+from gateway.schemas.inference import SettledCost
 from gateway.services.budgets import (
     ZERO,
     BudgetScopeRequest,
@@ -250,6 +249,7 @@ from gateway.services.inference import (
     end_user_identifier,
     is_empty_completion,
     is_provider_billing_error,
+    is_provider_credential_rejection,
     is_upstream_connect_failure,
     is_upstream_request_fault,
     is_upstream_stream_interrupted,

@@ -64,7 +64,7 @@ from gateway.api.routes._pipeline import (
     stream_final_attempt_extra_seconds,
     stream_first_chunk_timeout_seconds,
 )
-from gateway.api.routes._platform import ResolvedAttempt, ResolvedRoute, SettledCost
+from gateway.api.routes._platform import ResolvedAttempt, ResolvedRoute
 from gateway.core.config import GatewayConfig
 from gateway.exceptions import TenancyValidationError
 from gateway.exceptions.tools_exceptions import (
@@ -82,6 +82,7 @@ from gateway.ports.code_execution_policy_port import CodeExecutionPolicyScope
 from gateway.ports.mcp_server_port import McpServerPort, McpServerScope
 from gateway.ports.web_search_policy_port import WebSearchPolicyPort, WebSearchPolicyScope
 from gateway.rate_limit import RateLimitInfo
+from gateway.schemas.inference import SettledCost
 from gateway.services.budgets import ReservationHandle
 from gateway.services.inference import DeploymentCharge
 from gateway.services.pricing_service import ResolvedPricing

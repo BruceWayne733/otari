@@ -32,7 +32,7 @@ from gateway.api.deps import (
     get_unit_of_work_if_needed,
     verify_api_key_or_master_key,
 )
-from gateway.api.routes._helpers import latest_user_text, routing_signal_from_messages
+from gateway.api.routes._helpers import latest_user_text, routing_signal_from_messages, with_retry_hint
 from gateway.api.routes._idempotency import IdempotencyGuardDep, IdempotentReplay
 from gateway.api.routes._normalize import (
     container_copies_step,
@@ -66,9 +66,7 @@ from gateway.api.routes._pipeline import (
 )
 from gateway.api.routes._platform import (
     ResolvedAttempt,
-    SettledCost,
     _resolve_platform_credentials,
-    with_retry_hint,
 )
 from gateway.api.routes._request_tags import (
     ANTHROPIC_USER_KEY,
@@ -86,6 +84,7 @@ from gateway.exceptions.tools_exceptions import ContainerOnManagedCredentialErro
 from gateway.log_config import logger
 from gateway.models.guardrails import GuardrailConfig
 from gateway.models.mcp import MAX_MCP_SERVER_IDS, McpServerConfig
+from gateway.schemas.inference import SettledCost
 from gateway.services.code_execution import ContainerLease, check_container_on_credential, gateway_container_value
 from gateway.services.content_normalizer import stage_container_blocks
 from gateway.services.files import StagedFile
