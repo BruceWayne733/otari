@@ -153,14 +153,16 @@ export type InFlightResponse = Schemas["InFlightResponse"]
 // per-million or a per-call rate.
 export type TokenChargeLine = Schemas["TokenChargeLine"]
 export type UnitChargeLine = Schemas["UnitChargeLine"]
-/** One line of a row's `pricing_breakdown`, of whichever of the three shapes. */
+export type ToolChargeLine = Schemas["ToolChargeLine"]
+/** One line of a row's `pricing_breakdown`, of whichever of its shapes. */
 export type ChargeLine = NonNullable<UsageEntry["pricing_breakdown"]>[number]
 
-// Which rate a line carries is what says how to read it, and the third arm of
+// Which rate a line carries is what says how to read it, and the last arm of
 // the union is a line whose shape the gateway no longer writes (see the spec's
-// TokenChargeLine / UnitChargeLine). These guards live here rather than at the
-// one call site because the union is the generated client's, and a renderer that
-// assumed two arms would print an undefined rate for the third.
+// TokenChargeLine / UnitChargeLine / ToolChargeLine). These guards live here
+// rather than at the one call site because the union is the generated client's,
+// and a renderer that assumed only the named arms would print an undefined rate
+// for the last.
 //
 // They check the fields they promise rather than just the discriminator's
 // presence. The permissive arm is any object at all, so a legacy line carrying
@@ -182,6 +184,14 @@ export function isUnitChargeLine(line: ChargeLine): line is UnitChargeLine {
   return (
     hasChargeFields(line) &&
     typeof (line as Record<string, unknown>).unit_rate === "number"
+  )
+}
+// A per-call line that also names what served the calls. A stored tool line
+// without a label reads as a plain per-call line.
+export function isToolChargeLine(line: ChargeLine): line is ToolChargeLine {
+  return (
+    isUnitChargeLine(line) &&
+    typeof (line as Record<string, unknown>).label === "string"
   )
 }
 export function isTokenChargeLine(line: ChargeLine): line is TokenChargeLine {
