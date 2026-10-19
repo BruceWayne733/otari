@@ -93,6 +93,7 @@ from gateway.services.providers._hosted_credentials import (
     reencrypted,
     unmask_api_base,
 )
+from gateway.services.providers._hosted_name_index import forget_hosted_name, remember_hosted_name
 from gateway.services.providers._hosted_offers import HostedOffers
 from gateway.services.providers._hosted_runtime import HostedProviderRuntime
 from gateway.services.providers._hosted_sources import HostedSource, HostedSources
@@ -226,13 +227,15 @@ class HostedProviderService:
                 # The pre-check races the insert; the unique constraint decides.
                 raise HostedProviderAlreadyExistsError(conflict.name) from conflict
             await self.offers.offer(name, discovered, defaults)
-            return HostedProviderPublic.from_row(
+            public = HostedProviderPublic.from_row(
                 row,
                 client_args=request.client_args,
                 api_base=public_api_base(row.api_base),
                 decryptable=True,
                 shadows_config=shadows_config,
             )
+        remember_hosted_name(name, implementation)
+        return public
 
     async def update_provider(self, provider: str, request: HostedProviderUpdateRequest) -> HostedProviderPublic:
         """Rotate the key, repoint the base, change the extras, or toggle a provider.
@@ -314,6 +317,11 @@ class HostedProviderService:
             if not source.shadows_config:
                 await self.models.delete_for_provider(name)
             await self.providers.delete_row(row)
+        forget_hosted_name(name)
+        if source.shadows_config:
+            # The configuration entry of the same name serves again, as its own implementation.
+            entry = self.sources.entries()[name]
+            remember_hosted_name(name, entry.provider)
         get_model_cache().clear(name)
 
     async def list_models(self, provider: str, *, skip: int = 0, limit: int = 500) -> HostedModelsPublic:
@@ -592,15 +600,6 @@ class HostedProviderService:
         row.outcome = "migrated"
         async with self.uow:
             row.models = len(await self.models.names_for_provider(plan.name))
-            if plan.create.name is not None:
-                # Named otherwise than its implementation: no request reaches a
-                # hosted provider by such a name yet, so the deployment provider
-                # keeps serving ``instance:model`` until one does.
-                row.notes.append(
-                    "Requests cannot reach a hosted provider by a name of its own yet, so the deployment "
-                    "provider is kept and keeps serving. Run the move again once they can."
-                )
-                return False
             if row.models == 0:
                 row.notes.append(
                     "The provider listed no models, so the deployment provider is kept. Add its models on the "

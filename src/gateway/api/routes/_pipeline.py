@@ -273,7 +273,7 @@ from gateway.services.mcp_stateless import failure_class
 from gateway.services.model_access import (
     key_model_refusal,
     model_not_allowed_detail,
-    org_model_refusal,
+    organization_key_refusal,
     resolve_request_allowlist,
     unresolvable_model_detail,
     unresolved_model_refusal,
@@ -303,6 +303,8 @@ from gateway.services.provider_kwargs import (
     with_failover_retries,
 )
 from gateway.services.providers import (
+    hosted_credential_for,
+    hosted_models_for,
     managed_only_candidates,
     owned_endpoint_http_client,
     refuse_managed_candidate,
@@ -1547,7 +1549,10 @@ async def _prepare_for_dispatch(
     if ctx.plan is not None and len(ctx.plan.attempts) > 1:
         try:
             ctx.managed_only = await managed_only_candidates(
-                ctx.config, ctx.plan.attempts, hosted=lambda: port, organization_id=ctx.organization_id
+                ctx.config,
+                ctx.plan.attempts,
+                hosted=lambda: port,
+                organization_id=ctx.organization_id,
             )
         except asyncio.CancelledError:
             await release_reservation(ctx)
@@ -1582,10 +1587,8 @@ async def _refuse_if_hosted_model_switched_off(
     the ordinary missing-credential answer, so nothing here says whether such a
     provider exists.
     """
-    if ctx.organization_id is None:
-        return
     try:
-        served = await port.get_hosted_models(organization_id=ctx.organization_id)
+        served = await hosted_models_for(port, organization_id=ctx.organization_id)
     except Exception:
         # Best effort: the request then fails as it would have without this check.
         logger.warning("Could not list hosted models for %s:%s", resolved.instance, resolved.model)
@@ -1882,14 +1885,9 @@ async def _serve_from_hosted_credential(
     else:
         return resolved
     lookup = hosted_lookup(resolved.provider)
-    if ctx.organization_id is None:
-        # The port keys its access decision on the organization alone, so a
-        # request with no organization (no workspace resolved for it) has
-        # nothing to ask about.
-        raise await _provider_not_configured(ctx, resolved, missing, adapter=adapter)
-
     try:
-        credential = await port.resolve_hosted_credential(
+        credential = await hosted_credential_for(
+            port,
             organization_id=ctx.organization_id,
             workspace_id=ctx.workspace_id,
             # The instance rather than the implementation: that is the name
@@ -1987,7 +1985,7 @@ async def _serve_from_hosted_credential(
         raise await _provider_not_configured(ctx, resolved, missing, adapter=adapter)
 
     try:
-        upstream = LLMProvider(credential.response_provider)
+        upstream = LLMProvider(credential.upstream)
     except ValueError as exc:
         # The adapter named an upstream any-llm does not implement, so nothing
         # can be dispatched. That is a defect in this build rather than caller
@@ -2813,20 +2811,16 @@ async def resolve_request_context(
 
         # Organization-scoped model restriction (otari#643): the org key
         # resolved for this workspace+provider may narrow which models it
-        # serves. Applies only when the selector did not name a configured
-        # instance, the same condition `provider_kwargs.get_provider_kwargs`
-        # uses to decide whether to consult the organization overlay at all;
-        # an instance-addressed selector never reaches an organization key,
-        # so it is never subject to this restriction either.
+        # serves. The caller's own endpoint never reaches one.
         if (
-            workspace_id is not None
-            and gate_instance is not None
+            gate_instance is not None
             and gate_impl is not None
-            and gate_instance not in config.providers
             and (resolved_provider is None or resolved_provider.owned_endpoint is None)
         ):
-            refusal = org_model_refusal(
+            refusal = organization_key_refusal(
+                config,
                 workspace_id,
+                gate_instance,
                 gate_impl.value,
                 gate_model,
                 selector=model,
@@ -2999,7 +2993,12 @@ async def resolve_request_context(
         if not budget_exempt and pricing_required_but_missing(gate_pricing, require_pricing=config.require_pricing):
             await refund_reservation(db, reservation)
             refusal = await unpriced_model_refusal(
-                config, model, resolved_provider, plan=plan, hosted=model_provider, organization_id=organization_id
+                config,
+                model,
+                resolved_provider,
+                plan=plan,
+                hosted=model_provider,
+                organization_id=organization_id,
             )
             # Record the rejection after the refund, so an operator who flipped
             # require_pricing on can see that live traffic is being dropped.
