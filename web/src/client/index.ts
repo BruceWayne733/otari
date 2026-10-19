@@ -381,6 +381,16 @@ export type HostedAvailableModels = Schemas["HostedAvailableModelsPublic"]
 export type HostedCatalogRefresh = Schemas["HostedCatalogRefreshPublic"]
 export type HostedCatalogProviderRefresh =
   Schemas["HostedCatalogProviderRefreshPublic"]
+export type TestHostedProviderRequest = Schemas["HostedProviderTestRequest"]
+export type HostedProviderTestResult = Schemas["HostedProviderTestPublic"]
+export type ReencryptHostedProvidersResult =
+  Schemas["HostedProvidersReencryptPublic"]
+export type DeploymentProviderMigration =
+  Schemas["DeploymentProviderMigrationPublic"]
+export type DeploymentProviderMigrationRow =
+  Schemas["DeploymentProviderMigrationRowPublic"]
+export type DeploymentProviderMigrationReviewedRow =
+  Schemas["DeploymentProviderMigrationReviewedRow"]
 
 // ---------------------------------------------------------------------------
 // Routing
