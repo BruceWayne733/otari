@@ -66,10 +66,7 @@ function hostedModel(overrides: Partial<HostedModel> = {}): HostedModel {
   }
 }
 
-function providerInfo(
-  instance: string,
-  source: ProviderInfo["source"],
-): ProviderInfo {
+function providerInfo(instance: string): ProviderInfo {
   return {
     instance,
     provider_type: instance,
@@ -78,7 +75,7 @@ function providerInfo(
     description: null,
     env_key: null,
     pricing_urls: [],
-    source,
+    source: "config",
     capabilities: {
       streaming: true,
       reasoning: false,
@@ -123,7 +120,7 @@ function mockApi(
     sweep?: HostedCatalogRefresh
     /** Answers each preview read in turn; the sweep's own body otherwise. */
     previews?: (() => Promise<Response>)[]
-    /** The deployment providers the move would carry, and what each becomes. */
+    /** The stored providers the move would carry, and what each becomes. */
     migration?: DeploymentProviderMigrationRow[]
     /** The `providers:` instances GET /providers lists. */
     configured?: ProviderInfo[]
@@ -472,23 +469,6 @@ describe("HostedProvidersPage", () => {
         ),
       ).toBe(true),
     )
-  })
-
-  it("marks a provider that serves models not on its list", async () => {
-    mockApi({
-      providers: [
-        hostedProvider({ serves_unlisted_models: true }),
-        hostedProvider({ id: "m", provider: "mistral" }),
-      ],
-    })
-    await renderPage()
-
-    const table = await screen.findByRole("grid", { name: "Hosted providers" })
-    await within(table).findByText("Any model")
-    const row = (name: string) =>
-      within(table).getByRole("rowheader", { name: new RegExp(`^${name}`) })
-    expect(within(row("openai")).getByText("Any model")).toBeInTheDocument()
-    expect(within(row("mistral")).queryByText("Any model")).toBeNull()
   })
 
   it("adds a provider that serves models not on its list", async () => {
@@ -924,6 +904,64 @@ describe("HostedProvidersPage", () => {
 })
 
 describe("HostedProvidersPage, named providers and the move", () => {
+  it("discards a stored provider that cannot move, once confirmed", async () => {
+    const requests = mockApi({
+      migration: [
+        {
+          instance: "groq",
+          provider: "groq",
+          api_base: null,
+          outcome: "conflict",
+          detail: "A hosted provider already has this name.",
+          models: null,
+          source_removed: false,
+          notes: [],
+        },
+        {
+          instance: "openai-eu",
+          provider: "openai",
+          api_base: null,
+          outcome: "migrate",
+          detail: null,
+          models: null,
+          source_removed: false,
+          notes: [],
+        },
+      ],
+    })
+    const user = userEvent.setup()
+    await renderPage()
+
+    // A row that can still move is moved, not discarded.
+    await screen.findByRole("button", { name: "Discard groq" })
+    expect(
+      screen.queryByRole("button", { name: "Discard openai-eu" }),
+    ).toBeNull()
+
+    await user.click(screen.getByRole("button", { name: "Discard groq" }))
+    const dialog = await screen.findByRole("alertdialog")
+    expect(dialog).toHaveTextContent("Discard groq?")
+    const previewReads = () =>
+      requests.filter(
+        (request) =>
+          request.method === "GET" &&
+          request.url.endsWith("/hosted-providers/migration"),
+      ).length
+    const readsBefore = previewReads()
+    await user.click(within(dialog).getByRole("button", { name: "Discard" }))
+
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request) =>
+            request.method === "DELETE" &&
+            request.url.endsWith("/hosted-providers/migration/groq"),
+        ),
+      ).toBe(true),
+    )
+    await waitFor(() => expect(previewReads()).toBeGreaterThan(readsBefore))
+  })
+
   it("keeps offering the move after one that left a provider behind", async () => {
     mockApi({
       migration: [
@@ -962,14 +1000,14 @@ describe("HostedProvidersPage, named providers and the move", () => {
     )
 
     expect(
-      await screen.findByText(/Moved 1 of 2 deployment providers/),
+      await screen.findByText(/Moved 1 of 2 stored providers/),
     ).toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "Review the move" }),
     ).toBeInTheDocument()
   })
 
-  it("reports a row copied but still served from the old page apart from a completed move", async () => {
+  it("reports a row copied but still served from its original entry apart from a completed move", async () => {
     mockApi({
       migration: [
         {
@@ -1021,13 +1059,9 @@ describe("HostedProvidersPage, named providers and the move", () => {
     )
 
     expect(
-      await screen.findByText(/Moved 0 of 1 deployment providers\. 1 copied/),
+      await screen.findByText(/Moved 0 of 1 stored providers\. 1 copied/),
     ).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        /^Copied, still served from the Deployment providers page/,
-      ),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/^Copied, original entry kept/)).toBeInTheDocument()
   })
 
   it("shows inside the dialog why a failed re-read holds the move", async () => {
@@ -1097,20 +1131,29 @@ describe("HostedProvidersPage, named providers and the move", () => {
         hostedProvider({ name: "openai" }),
         hostedProvider({ id: "m", name: "mistral", provider: "mistral" }),
       ],
-      configured: [providerInfo("openai", "config")],
+      configured: [providerInfo("openai")],
       health: [reachable("openai"), reachable("mistral")],
     })
     await renderPage()
 
     const table = await screen.findByRole("grid", { name: "Hosted providers" })
-    await screen.findByRole("grid", { name: "Configured providers" })
-    const row = (name: string) =>
-      within(table).getByRole("rowheader", { name: new RegExp(`^${name}`) })
-        .parentElement as HTMLElement
+    const rows = (name: string) =>
+      within(table)
+        .getAllByRole("rowheader", { name: new RegExp(`^${name}`) })
+        .map((header) => header.parentElement as HTMLElement)
+    await within(table).findByText("Edit in config.yml")
+    const [configuredOpenai, hostedOpenai] = [...rows("openai")].sort(
+      (a, b) =>
+        Number(within(b).queryByText("Edit in config.yml") !== null) -
+        Number(within(a).queryByText("Edit in config.yml") !== null),
+    )
     // The configured instance's record is the one dialed under "openai".
-    expect(within(row("openai")).queryByText("Reachable")).toBeNull()
     expect(
-      await within(row("mistral")).findByText("Reachable"),
+      await within(configuredOpenai).findByText("Reachable"),
+    ).toBeInTheDocument()
+    expect(within(hostedOpenai).queryByText("Reachable")).toBeNull()
+    expect(
+      await within(rows("mistral")[0]).findByText("Reachable"),
     ).toBeInTheDocument()
   })
 
@@ -1245,26 +1288,28 @@ describe("HostedProvidersPage, named providers and the move", () => {
     expect(within(table).getByText("Key unreadable")).toBeInTheDocument()
   })
 
-  it("lists the configured providers read-only beside the hosted ones", async () => {
+  it("lists the configured providers read-only in the same table", async () => {
     mockApi({
-      configured: [
-        providerInfo("anthropic", "config"),
-        providerInfo("groq", "dashboard"),
-      ],
+      providers: [hostedProvider({ name: "openai" })],
+      configured: [providerInfo("anthropic")],
     })
     await renderPage()
 
-    const table = await screen.findByRole("grid", {
-      name: "Configured providers",
+    const table = await screen.findByRole("grid", { name: "Hosted providers" })
+    const header = await within(table).findByRole("rowheader", {
+      name: /^anthropic/,
     })
+    const row = header.parentElement as HTMLElement
+    expect(within(row).getByText("config.yml")).toBeInTheDocument()
+    expect(within(row).getByText("Edit in config.yml")).toBeInTheDocument()
+    expect(within(row).queryByRole("button")).toBeNull()
+    expect(within(row).queryByRole("switch")).toBeNull()
     expect(
-      within(table).getByRole("rowheader", { name: "anthropic" }),
+      within(table).getByRole("button", { name: "Edit openai" }),
     ).toBeInTheDocument()
-    // Stored through the deployment providers page: the move covers it instead.
-    expect(within(table).queryByText("groq")).toBeNull()
   })
 
-  it("moves the deployment providers once the preview is reviewed", async () => {
+  it("moves the stored providers once the preview is reviewed", async () => {
     const requests = mockApi({
       migration: [
         {
@@ -1302,7 +1347,7 @@ describe("HostedProvidersPage, named providers and the move", () => {
     )
 
     expect(
-      await screen.findByText(/Moved 1 of 2 deployment providers/),
+      await screen.findByText(/Moved 1 of 2 stored providers/),
     ).toBeInTheDocument()
     const moves = hostedRequests(requests, "POST").filter((request) =>
       request.url.endsWith("/hosted-providers/migration"),
