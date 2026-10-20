@@ -494,6 +494,15 @@ A service key's `user` field names one of its end users here as it does on chat
 completions: the search is billed to that end user, under the key's end-user
 budget, and counted by `rate_limits`.
 
+**Price.** A search is billed at the provider's reported cost when it reports
+one, else at the tool's own per-call rate: its `price_per_call`, or a price row
+of kind `search` keyed by the tool's name (`POST /api/v1/pricing` takes a
+`kind`, as do the pricing reads and deletes, as a `?kind=` query, and
+`/api/v1/organizations/me/pricing`, where only a deployment operator sets a
+`search` or `fetch` override). A row written under the old
+`<provider>:<tool>` key is read after it, until a later release. See
+[Pricing a gateway-run tool](tools.md#pricing-a-gateway-run-tool) for the order and the organization key's rate.
+
 **Errors.** Where a refusal carries a stable code, it is in the
 `Otari-Error-Code` header and the body's `code`; see [Error codes](#error-codes).
 
@@ -511,7 +520,7 @@ budget, and counted by `rate_limits`.
 | A `user` naming another user, where the key rejects a mismatch | 403 | |
 | A service key's `Otari-End-User-Budget` is not one it may use | 403 | `end_user_budget_not_allowed` |
 | A budget refuses the search | 403 | `budget_exceeded` |
-| `require_pricing` is on and the search's pricing row is missing (`<provider>:<tool>`, or `otari:web_search` for a search the workspace's organization key serves); the detail names it | 402 | `pricing_required` |
+| `require_pricing` is on and the search has no price (a row of kind `search` keyed by the tool's name, or its `price_per_call`; `otari:web_search` for a search the workspace's organization key serves); the detail names it | 402 | `pricing_required` |
 | A rate limit is full | 429 | `rate_limited` |
 | The workspace's organization search key cannot be used as it is | 502 | |
 | The provider failed the search, or could not be reached | 502 | |

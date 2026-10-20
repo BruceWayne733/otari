@@ -98,6 +98,8 @@ from gateway.services.policy_store import (
 )
 from gateway.services.pricing_init_service import (
     initialize_pricing_from_config,
+    initialize_tool_prices_from_config,
+    warn_about_legacy_tool_prices,
     warn_if_gateway_tools_lack_pricing,
     warn_if_require_pricing_without_pricing,
     warn_if_router_candidates_lack_pricing,
@@ -843,8 +845,11 @@ async def _run_feature_worker(name: str, worker: Worker, config: GatewayConfig) 
 
 
 def _create_lifespan() -> Callable[[FastAPI], Any]:
+    """The app's lifespan: startup's checks, migrations and seeding, then shutdown's cleanup."""
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        """Prepare the database, prices and background tasks for ``app``, and stop them when it ends."""
         # From the app, not a closure: app.state.config is what get_config hands
         # every request, so startup reads the same object.
         config: GatewayConfig = app.state.config
@@ -926,8 +931,10 @@ def _create_lifespan() -> Callable[[FastAPI], Any]:
                 await load_org_provider_keys_at_startup(session)
                 await bootstrap_first_api_key(config, session, app.state.container.resolve(ApiKeyFormatPort, session))
                 await initialize_pricing_from_config(config, session)
+                await initialize_tool_prices_from_config(config, session)
                 await warn_if_require_pricing_without_pricing(config, session)
                 await warn_if_search_tools_lack_flat_pricing(config, session)
+                await warn_about_legacy_tool_prices(config, session)
                 await warn_if_gateway_tools_lack_pricing(config, session)
                 await warn_if_router_candidates_lack_pricing(config, session)
                 await load_aliases_at_startup(session)
