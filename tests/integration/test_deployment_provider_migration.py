@@ -167,6 +167,7 @@ def test_a_row_that_shadows_a_config_entry_says_the_entry_serves_again(
 def test_a_provider_that_lists_nothing_keeps_its_deployment_provider(
     client: TestClient, master_key_header: dict[str, str], db_session: Session, dials: list[dict[str, Any]]
 ) -> None:
+    """A hosted provider serves only its roster by default, so the row keeps serving until its models are added."""
     _deployment_provider(client, master_key_header, "openai", api_key="sk-quiet-5555", api_base="https://silent.test")
 
     [row] = _rows(client.post(PATH, headers=master_key_header)).values()
@@ -177,7 +178,8 @@ def test_a_provider_that_lists_nothing_keeps_its_deployment_provider(
     assert [credential.instance for credential in db_session.execute(select(ProviderCredential)).scalars()] == [
         "openai"
     ]
-    assert [provider.name for provider in db_session.execute(select(HostedProvider)).scalars()] == ["openai"]
+    [hosted] = db_session.execute(select(HostedProvider)).scalars().all()
+    assert (hosted.name, hosted.serves_unlisted_models) == ("openai", False)
 
 
 def test_a_name_a_hosted_provider_cannot_take_says_how_to_move_it(
@@ -210,11 +212,12 @@ def test_a_row_no_configured_key_reads_is_left_where_it_is(
     assert db_session.execute(select(HostedProvider)).scalars().all() == []
 
 
-def test_a_row_moved_twice_is_a_conflict_the_second_time(
+def test_a_row_stored_again_under_a_moved_name_is_a_conflict(
     client: TestClient, master_key_header: dict[str, str], dials: list[dict[str, Any]]
 ) -> None:
-    _deployment_provider(client, master_key_header, "openai", api_key="sk-quiet-5555", api_base="https://silent.test")
+    _deployment_provider(client, master_key_header, "openai", api_key="sk-openai-5555")
     client.post(PATH, headers=master_key_header)
+    _deployment_provider(client, master_key_header, "openai", api_key="sk-again-6666")
 
     [row] = _rows(client.post(PATH, headers=master_key_header)).values()
 

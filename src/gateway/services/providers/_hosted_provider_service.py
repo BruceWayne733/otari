@@ -174,13 +174,17 @@ class HostedProviderService:
                 data=[self._public(source) for source in sources[skip : skip + limit]], count=len(sources)
             )
 
-    async def create_provider(self, request: HostedProviderCreateRequest) -> HostedProviderPublic:
+    async def create_provider(
+        self, request: HostedProviderCreateRequest, *, switch_on_listed: bool = False
+    ) -> HostedProviderPublic:
         """Configure a provider, offering everything it lists on the new key.
 
         A name the configuration already defines may be created too, and the
         row then wins over the entry. A provider that will not list yields a
         provider with no models rather than a failed create: the credential may
-        still be right for dispatch.
+        still be right for dispatch. ``switch_on_listed`` switches on every
+        model it lists whether or not something prices it, for a provider that
+        already served them elsewhere.
 
         Raises:
             HostedProviderUnknownProviderError: ``provider`` names no any-llm implementation.
@@ -222,11 +226,14 @@ class HostedProviderService:
                     encrypted_client_args=encrypted_client_args,
                     enabled=request.enabled,
                     restricted_to_organization_id=request.restricted_to_organization_id,
+                    serves_unlisted_models=request.serves_unlisted_models,
                 )
             except HostedProviderConflict as conflict:
                 # The pre-check races the insert; the unique constraint decides.
                 raise HostedProviderAlreadyExistsError(conflict.name) from conflict
-            await self.offers.offer(name, discovered, defaults)
+            await self.offers.offer(
+                name, discovered, defaults, serves_unlisted=request.serves_unlisted_models or switch_on_listed
+            )
             public = HostedProviderPublic.from_row(
                 row,
                 client_args=request.client_args,
@@ -292,6 +299,8 @@ class HostedProviderService:
                 row.encrypted_client_args = encrypt_client_args(restore_redacted_values(request.client_args, stored))
             if request.enabled is not None:
                 row.enabled = request.enabled
+            if request.serves_unlisted_models is not None:
+                row.serves_unlisted_models = request.serves_unlisted_models
             if "restricted_to_organization_id" in request.model_fields_set:
                 await self._require_organization(request.restricted_to_organization_id)
                 row.restricted_to_organization_id = request.restricted_to_organization_id
@@ -371,7 +380,9 @@ class HostedProviderService:
                     raise HostedModelAlreadyOfferedError(provider, conflict.model) from conflict
                 await self.offers.write_rate(provider, name, request)
             else:
-                [model] = await self.offers.offer(provider, [name], defaults)
+                [model] = await self.offers.offer(
+                    provider, [name], defaults, serves_unlisted=source.serves_unlisted_models
+                )
         rates = await self.offers.current_rates(provider, [model], implementation=implementation)
         return HostedModelPublic.from_row(model, rates=rates.get(name))
 
@@ -451,8 +462,8 @@ class HostedProviderService:
 
         async with self.uow:
             await self._provider_or_raise(provider)
-            repriced = await self.offers.reseed(provider, defaults)
-            await self.offers.offer(provider, added, defaults)
+            repriced = await self.offers.reseed(provider, defaults, serves_unlisted=source.serves_unlisted_models)
+            await self.offers.offer(provider, added, defaults, serves_unlisted=source.serves_unlisted_models)
         return HostedModelsRefreshPublic(added=added, repriced=repriced, count=len(offered) + len(added))
 
     async def available_models(self, provider: str) -> HostedAvailableModelsPublic:
@@ -559,12 +570,13 @@ class HostedProviderService:
     ) -> DeploymentProviderMigrationPublic:
         """Move the deployment providers stored through the dashboard onto hosted providers, or preview it.
 
-        Each becomes a hosted provider of the same name, its models discovered
-        as on any create. The deployment provider is removed once the hosted
-        one offers a model, so a provider that will not list keeps serving as
-        it did until the operator adds its models. One that cannot move (a
-        name a hosted provider already holds, a key no configured key reads)
-        is reported and left where it is; so is one edited while this ran.
+        Each becomes a hosted provider of the same name, every model it lists
+        offered and switched on, priced or not, as the deployment provider
+        served them. The deployment provider is removed once the hosted one
+        offers a model, so a provider that will not list keeps serving as it
+        did until the operator adds its models. One that cannot move (a name a
+        hosted provider already holds, a key no configured key reads) is
+        reported and left where it is; so is one edited while this ran.
 
         ``reviewed`` binds an apply to the preview the caller reviewed, by
         instance and the version it was shown at: a row it does not name, or
@@ -601,7 +613,7 @@ class HostedProviderService:
             return False
         row = plan.row
         try:
-            await self.create_provider(plan.create)
+            await self.create_provider(plan.create, switch_on_listed=True)
         except TenancyError as exc:
             row.outcome = "failed"
             row.detail = str(exc)

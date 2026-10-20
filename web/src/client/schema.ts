@@ -9900,7 +9900,7 @@ export interface components {
          *     ``unreadable``, ``invalid`` and ``failed`` leave the row where it is, with
          *     ``detail`` saying why. ``source_removed`` says whether the deployment
          *     provider was removed: it is kept while the hosted provider offers no model,
-         *     so nothing it serves stops being served. ``notes`` are what an operator
+         *     and when it changed while the move ran. ``notes`` are what an operator
          *     should check afterwards.
          */
         DeploymentProviderMigrationRowPublic: {
@@ -11250,6 +11250,9 @@ export interface components {
          *     key takes. Values under credential-shaped names come back masked.
          *     ``restricted_to_organization_id`` keeps the provider to one organization;
          *     every other one is served as if it were not configured.
+         *     ``serves_unlisted_models`` serves a model the roster does not list, as a
+         *     ``config.yml`` instance does, and switches on every model it offers
+         *     whether or not something prices it.
          * @example {
          *       "api_key": "<your OpenAI API key>",
          *       "provider": "openai"
@@ -11275,6 +11278,11 @@ export interface components {
             provider: string;
             /** Restricted To Organization Id */
             restricted_to_organization_id?: string | null;
+            /**
+             * Serves Unlisted Models
+             * @default false
+             */
+            serves_unlisted_models: boolean;
         };
         /**
          * HostedProviderPublic
@@ -11295,6 +11303,8 @@ export interface components {
          *     the row is deleted. ``has_api_key`` is false for one stored without a key,
          *     and ``decryptable`` false for one whose key or extras no configured
          *     ``OTARI_SECRET_KEY`` reads, which serves nothing until re-entered.
+         *     ``serves_unlisted_models`` is true for one that serves a model its roster
+         *     does not list.
          */
         HostedProviderPublic: {
             /** Api Base */
@@ -11327,6 +11337,11 @@ export interface components {
             provider: string;
             /** Restricted To Organization Id */
             restricted_to_organization_id?: string | null;
+            /**
+             * Serves Unlisted Models
+             * @default false
+             */
+            serves_unlisted_models: boolean;
             /**
              * Shadows Config
              * @default false
@@ -11421,6 +11436,8 @@ export interface components {
             enabled?: boolean | null;
             /** Restricted To Organization Id */
             restricted_to_organization_id?: string | null;
+            /** Serves Unlisted Models */
+            serves_unlisted_models?: boolean | null;
         };
         /**
          * HostedProvidersPublic

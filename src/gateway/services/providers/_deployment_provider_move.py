@@ -2,8 +2,9 @@
 
 A ``provider_credentials`` row becomes a hosted provider of the same name, so
 an ``instance:model`` selector keeps reaching it, served by the implementation
-the row declares. This module plans one row; the service creates the hosted
-provider and removes the row.
+the row declares. Every model the provider lists is offered and switched on,
+priced or not, as the row served them. This module plans one row; the service
+creates the hosted provider and removes the row.
 """
 
 from dataclasses import dataclass, field

@@ -127,7 +127,13 @@ catalog indefinitely.
 A [hosted provider](modes.md#hosted-providers-and-byo-credentials) lists its
 roster, the models switched on under it, rather than everything its upstream
 lists. The operator's `GET /api/v1/models/discoverable` and provider health
-dial it on its stored key beside the configured instances.
+dial it on its stored key beside the configured instances. A hosted provider
+serves only its roster unless it serves models not on its roster
+(`serves_unlisted_models`, off by default): it then also serves any model a
+request names, the way a `providers:` instance does, switches on every model
+it offers whether or not something prices it, and still refuses a model its
+roster switches off. A provider moved from the Deployment providers page
+starts with it off and every model it lists switched on.
 
 Each listed model carries the rate a request from the caller would be billed at,
 and `pricing_source` says which price list it came from: `organization` for the
