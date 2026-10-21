@@ -393,9 +393,9 @@ async def test_a_member_added_to_a_workspace_deleted_mid_join_gets_not_found(
             async with sessions() as other:
                 deleter = await UserRepository(other).get(owner.id)
                 assert deleter is not None
-                await WorkspaceService(
-                    other, **membership_writes(other)
-                ).delete_workspace(user=deleter, workspace_id=workspace_id)
+                await WorkspaceService(other, **membership_writes(other)).delete_workspace(
+                    user=deleter, workspace_id=workspace_id
+                )
             await take_lock(workspace_id)
 
         monkeypatch.setattr(adder.workspaces, "lock", delete_then_lock)
