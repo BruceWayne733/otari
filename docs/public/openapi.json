@@ -48741,6 +48741,12 @@
             },
             "description": "Successful Response"
           },
+          "404": {
+            "description": "The workspace does not exist, or was deleted during the add"
+          },
+          "409": {
+            "description": "The user is already a member of the workspace"
+          },
           "422": {
             "content": {
               "application/json": {

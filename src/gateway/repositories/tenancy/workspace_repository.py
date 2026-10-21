@@ -5,10 +5,12 @@ from collections.abc import Collection, Sequence
 from typing import Any
 
 from sqlalchemy import Select, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
 from gateway.core.unit_of_work import UnitOfWork
+from gateway.exceptions.organizations_exceptions import WorkspaceMemberAlreadyExistsError, WorkspaceNotFoundError
 from gateway.models.tenancy import (
     User,
     Workspace,
@@ -153,6 +155,27 @@ class WorkspaceRepository(BaseRepository[Workspace, WorkspaceCreate, WorkspaceUp
         """Stage a deletion. Members ride the database cascade."""
         await self.db.delete(workspace)
         await self.db.flush()
+
+
+_MEMBER_UNIQUE = "uq_workspace_member_workspace_user"
+# PostgreSQL's default name for the unnamed workspace foreign key in the tenancy migration.
+_MEMBER_WORKSPACE_FK = "workspace_member_workspace_id_fkey"
+_UNIQUE_VIOLATION = {"23505", "SQLITE_CONSTRAINT_UNIQUE"}
+_FOREIGN_KEY_VIOLATION = "23503"
+
+
+def _refusal(exc: IntegrityError) -> tuple[str | None, str | None]:
+    """The SQLSTATE (or SQLite error name) and the constraint that refused a statement.
+
+    Read the way ``describe_database_error`` reads them, never from the message.
+    SQLite reports no constraint name, so the second value is None there.
+    """
+    orig = exc.orig
+    driver = getattr(orig, "__cause__", None) or orig
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None) or getattr(orig, "sqlite_errorname", None)
+    diag = getattr(orig, "diag", None)  # psycopg
+    constraint = getattr(driver, "constraint_name", None) or getattr(diag, "constraint_name", None)
+    return code, constraint
 
 
 class WorkspaceMemberRepository:
@@ -355,6 +378,39 @@ class WorkspaceMemberRepository:
         member = WorkspaceMember(workspace_id=workspace_id, user_id=user_id, role=role, status=status)
         self.db.add(member)
         await self.db.flush()
+        await self.db.refresh(member)
+        return member
+
+    async def add(self, *, workspace_id: uuid.UUID, user_id: uuid.UUID, role: str = "member") -> WorkspaceMember:
+        """Stage a new active membership and return it with its generated values.
+
+        The refusal is read from the error itself. The caller's Unit of Work rolls the
+        whole step back when this raises, so nothing is queried afterwards and no
+        savepoint is needed. A savepoint here would also be the outermost transaction on
+        SQLite, which begins none for a SELECT, and releasing it would commit the member
+        before the caller's listener has run.
+
+        A refusal that is neither a duplicate nor a deleted workspace is raised as it came,
+        so it fails the step instead of being reported as one of them. SQLite does not name
+        the foreign key it enforced, so there a missing workspace is raised as it came too.
+
+        Raises:
+            WorkspaceMemberAlreadyExistsError: the user is already a member of this workspace.
+            WorkspaceNotFoundError: the workspace no longer exists.
+        """
+        member = WorkspaceMember(workspace_id=workspace_id, user_id=user_id, role=role, status="active")
+        self.db.add(member)
+        try:
+            await self.db.flush()
+        except IntegrityError as exc:
+            code, constraint = _refusal(exc)
+            # SQLite names no constraint, but the pair is the table's only unique one
+            # besides the generated primary key.
+            if code in _UNIQUE_VIOLATION and constraint in (_MEMBER_UNIQUE, None):
+                raise WorkspaceMemberAlreadyExistsError(user_id) from None
+            if code == _FOREIGN_KEY_VIOLATION and constraint == _MEMBER_WORKSPACE_FK:
+                raise WorkspaceNotFoundError(workspace_id) from None
+            raise
         await self.db.refresh(member)
         return member
 

@@ -29880,6 +29880,20 @@ export interface operations {
                     "application/json": components["schemas"]["WorkspaceMemberPublic"];
                 };
             };
+            /** @description The workspace does not exist, or was deleted during the add */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The user is already a member of the workspace */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Validation Error */
             422: {
                 headers: {

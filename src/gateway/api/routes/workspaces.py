@@ -131,7 +131,14 @@ async def list_workspace_members(
     )
 
 
-@router.post("/{workspace_id}/members/{user_id}", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{workspace_id}/members/{user_id}",
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "The workspace does not exist, or was deleted during the add"},
+        status.HTTP_409_CONFLICT: {"description": "The user is already a member of the workspace"},
+    },
+)
 async def add_workspace_member(
     service: WorkspaceServiceDep,
     current_identity: CurrentIdentity,
