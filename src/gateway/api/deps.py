@@ -45,6 +45,7 @@ from gateway.repositories.health_checks import (
 )
 from gateway.repositories.identity import IdentityRepositories
 from gateway.repositories.inference import InferenceRepositories
+from gateway.repositories.organizations import OrganizationRepositories
 from gateway.repositories.overview.overview_repository import OverviewRepository
 from gateway.repositories.pricing import ModelPricingRepository, OrganizationModelPricingRepository
 from gateway.repositories.providers import (
@@ -97,7 +98,7 @@ from gateway.services.master_key_service import hash_master_key, is_generated_ma
 from gateway.services.model_discovery_service import DiscoveryDial, HostedDiscovery
 from gateway.services.oauth_service import provider_label
 from gateway.services.organization_pricing_service import OrganizationPricingService
-from gateway.services.organizations import InvitationMailLimit
+from gateway.services.organizations import InvitationMailLimit, UserAccess
 from gateway.services.overview import OverviewService
 from gateway.services.playground_service import LocalToolOffer, PlaygroundToolOffer
 from gateway.services.pricing import DeploymentPricingService
@@ -1375,9 +1376,14 @@ def get_invitation_mail_limit(
 InvitationMailLimitDep = Annotated[InvitationMailLimit, Depends(get_invitation_mail_limit)]
 
 
+def get_user_access(uow: Annotated[UnitOfWork, Depends(get_unit_of_work)]) -> UserAccess:
+    """Build the organizations domain's read of users' access lists on the request's Unit of Work."""
+    return UserAccess(OrganizationRepositories.on(uow))
+
+
 def get_api_key_service(uow: Annotated[UnitOfWork, Depends(get_unit_of_work)]) -> ApiKeyService:
-    """Build the request's API key service on the request's Unit of Work."""
-    return ApiKeyService(uow, ApiKeyRepositories.on(uow))
+    """Build the request's API key service on the request's Unit of Work; key owners' lists come from organizations."""
+    return ApiKeyService(uow, ApiKeyRepositories.on(uow), users=get_user_access(uow))
 
 
 ApiKeyServiceDep = Annotated[ApiKeyService, Depends(get_api_key_service)]
