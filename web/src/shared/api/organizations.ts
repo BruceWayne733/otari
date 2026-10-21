@@ -199,12 +199,10 @@ export function useOrganizationMemberships() {
         "/organizations/me/memberships",
       ),
     staleTime: 60_000,
-    // Same guard as `useUsageGroupedSeries` and `useInFlightRequests`, and for
-    // both of their reasons: a gateway older than this bundle does not serve
-    // this route (the process may not have restarted onto the build that ships
-    // it), and a hybrid gateway answers 404 for every `/organizations` path
-    // by design. Neither is something a retry fixes; the switcher falls back to
-    // stating the one organization the context names.
+    // Same guard as `useUsageGroupedSeries` and `useInFlightRequests`: a
+    // gateway older than this bundle does not serve this route (the process may
+    // not have restarted onto the build that ships it), which no retry fixes;
+    // the switcher falls back to stating the one organization the context names.
     retry: (failureCount, error) =>
       !(error instanceof ApiError && error.status === 404) && failureCount < 3,
   })
@@ -311,17 +309,12 @@ export function useDeleteOrganization() {
   })
 }
 
-// `enabled` because the roster is now read from outside the Organization pages
-// too, to name the owner of an API key. A deployment that does not host the
-// `organizations` surface has no such route to call, so the caller gates on it
-// rather than letting the page 404 on a request it only wanted for a label.
-export function useOrganizationMembers(enabled = true) {
+export function useOrganizationMembers() {
   return useQuery({
     queryKey: [ORGANIZATION_MEMBERS],
     queryFn: () =>
       fetchAllPaged<OrganizationMember>("/organizations/me/members"),
     staleTime: 60_000,
-    enabled,
   })
 }
 
@@ -477,10 +470,8 @@ export function useRevokeOrganizationMemberInvitation() {
 //
 // Keyed under ORGANIZATIONS so accepting, declining, or switching invalidates
 // it along with the rest of the tenancy cache. Same 404 guard as
-// `useOrganizationMemberships`, for both of its reasons: a gateway older than
-// this bundle does not serve this route, and a hybrid gateway answers 404 for
-// every `/organizations` path by design. Neither is something a retry
-// fixes, and the entry point that reads the count treats a failure as "nothing
+// `useOrganizationMemberships`: a gateway older than this bundle does not serve
+// this route, which no retry fixes, and the entry point that reads the count treats a failure as "nothing
 // waiting" rather than showing an error in the chrome.
 export function usePendingOrganizationInvitations(enabled = true) {
   return useQuery({

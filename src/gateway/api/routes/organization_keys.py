@@ -53,7 +53,6 @@ from gateway.api.deps import (
 from gateway.api.routes._helpers import database_error
 from gateway.api.routes.keys import (
     _KEY_EXCEEDS_USER_DETAIL,
-    NOT_INTERNAL,
     CreateKeyResponse,
     KeyInfo,
     _load_key_in_organization,
@@ -71,7 +70,6 @@ from gateway.repositories.users_repository import get_or_create_attribution_user
 from gateway.services.model_access import is_allowlist_subset, validate_allowed_models
 from gateway.services.tenancy import OrganizationService
 from gateway.services.tenancy.authorization import resolve_workspace_in_organization
-from gateway.services.tenancy.workspace_listener import NullWorkspaceListener
 from gateway.services.workspace_scope import organization_default_workspace_id
 
 router = APIRouter(
@@ -153,9 +151,7 @@ async def _caller_context(db: AsyncSession, identity: TenancyUser) -> tuple[uuid
     identity's UUID rendered as a string, the attribution convention
     ``get_or_create_attribution_user`` documents.
     """
-    organization = await OrganizationService(
-        db, membership_listener=None, workspace_listener=NullWorkspaceListener()
-    ).get_active_organization_for_user(identity)
+    organization = await OrganizationService(db, membership_listener=None).get_active_organization_for_user(identity)
     return organization.id, str(identity.id)
 
 
@@ -176,7 +172,7 @@ async def create_own_key(
     workspace must be visible to the caller (a member of it, or an organization
     owner/admin, who see every workspace). The secret is returned once.
     """
-    organizations = OrganizationService(db, membership_listener=None, workspace_listener=NullWorkspaceListener())
+    organizations = OrganizationService(db, membership_listener=None)
     organization = await organizations.get_active_organization_for_user(identity)
 
     if request.workspace_id is not None:
@@ -319,7 +315,6 @@ async def list_own_keys(
         .where(
             col(Workspace.organization_id) == organization_id,
             col(APIKey.user_id) == owner_user_id,
-            NOT_INTERNAL,
         )
     )
     if workspace_id is not None:

@@ -1,4 +1,4 @@
-"""Focused tests for inline platform-cost wire placement."""
+"""Where each inference adapter carries a settled cost on the wire, and which streamed object carries it."""
 
 from typing import Any, cast
 
