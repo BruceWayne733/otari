@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from gateway.core.database import database_refusal
 from gateway.core.unit_of_work import UnitOfWork
 from gateway.exceptions.organizations_exceptions import WorkspaceMemberAlreadyExistsError, WorkspaceNotFoundError
 from gateway.models.tenancy import (
@@ -21,6 +22,14 @@ from gateway.models.tenancy import (
 )
 from gateway.repositories.base_repository import BaseRepository
 from gateway.repositories.tenancy.user_repository import user_alphabetical_order
+
+_MEMBER_UNIQUE = "uq_workspace_member_workspace_user"
+# PostgreSQL's default name for the unnamed workspace foreign key in the tenancy migration.
+_MEMBER_WORKSPACE_FK = "workspace_member_workspace_id_fkey"
+_UNIQUE_VIOLATION = frozenset({"23505", "SQLITE_CONSTRAINT_UNIQUE"})
+# SQLite's foreign-key refusal carries no constraint name, so it cannot be told
+# from any other foreign key on this table and is not listed here.
+_FOREIGN_KEY_VIOLATION = frozenset({"23503"})
 
 
 def ids_in_organization(organization_id: uuid.UUID) -> Select[tuple[uuid.UUID]]:
@@ -155,27 +164,6 @@ class WorkspaceRepository(BaseRepository[Workspace, WorkspaceCreate, WorkspaceUp
         """Stage a deletion. Members ride the database cascade."""
         await self.db.delete(workspace)
         await self.db.flush()
-
-
-_MEMBER_UNIQUE = "uq_workspace_member_workspace_user"
-# PostgreSQL's default name for the unnamed workspace foreign key in the tenancy migration.
-_MEMBER_WORKSPACE_FK = "workspace_member_workspace_id_fkey"
-_UNIQUE_VIOLATION = {"23505", "SQLITE_CONSTRAINT_UNIQUE"}
-_FOREIGN_KEY_VIOLATION = "23503"
-
-
-def _refusal(exc: IntegrityError) -> tuple[str | None, str | None]:
-    """The SQLSTATE (or SQLite error name) and the constraint that refused a statement.
-
-    Read the way ``describe_database_error`` reads them, never from the message.
-    SQLite reports no constraint name, so the second value is None there.
-    """
-    orig = exc.orig
-    driver = getattr(orig, "__cause__", None) or orig
-    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None) or getattr(orig, "sqlite_errorname", None)
-    diag = getattr(orig, "diag", None)  # psycopg
-    constraint = getattr(driver, "constraint_name", None) or getattr(diag, "constraint_name", None)
-    return code, constraint
 
 
 class WorkspaceMemberRepository:
@@ -403,12 +391,12 @@ class WorkspaceMemberRepository:
         try:
             await self.db.flush()
         except IntegrityError as exc:
-            code, constraint = _refusal(exc)
+            code, constraint = database_refusal(exc)
             # SQLite names no constraint, but the pair is the table's only unique one
             # besides the generated primary key.
             if code in _UNIQUE_VIOLATION and constraint in (_MEMBER_UNIQUE, None):
                 raise WorkspaceMemberAlreadyExistsError(user_id) from None
-            if code == _FOREIGN_KEY_VIOLATION and constraint == _MEMBER_WORKSPACE_FK:
+            if code in _FOREIGN_KEY_VIOLATION and constraint == _MEMBER_WORKSPACE_FK:
                 raise WorkspaceNotFoundError(workspace_id) from None
             raise
         await self.db.refresh(member)
