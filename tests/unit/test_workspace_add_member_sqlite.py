@@ -30,7 +30,6 @@ from gateway.repositories.tenancy import (
 )
 from gateway.services.tenancy import WorkspaceService
 from gateway.services.tenancy.membership_listener import MembershipListener
-from gateway.services.tenancy.workspace_listener import NullWorkspaceListener
 
 pytestmark = pytest.mark.asyncio
 
@@ -63,9 +62,7 @@ class _ConstraintFailingListener(_QuietListener):
 
 
 def _workspace_service(db: AsyncSession, listener: MembershipListener) -> WorkspaceService:
-    return WorkspaceService(
-        db, uow=UnitOfWork(db), membership_listener=listener, workspace_listener=NullWorkspaceListener()
-    )
+    return WorkspaceService(db, uow=UnitOfWork(db), membership_listener=listener)
 
 
 @pytest_asyncio.fixture
